@@ -54,6 +54,7 @@ SKILL_ALIASES = {
         "esocial",
         "e-social",
         "eventos esocial",
+        "eventos do esocial",
     ],
 
     "Legislação Trabalhista": [
@@ -62,6 +63,7 @@ SKILL_ALIASES = {
         "direito do trabalho",
         "legislacao do trabalho",
         "legislação do trabalho",
+        "clt",
     ],
 
     "Relações Trabalhistas": [
@@ -71,6 +73,9 @@ SKILL_ALIASES = {
         "audiencias trabalhistas",
         "audiências trabalhistas",
         "preposto",
+        "sindicatos",
+        "negociacao sindical",
+        "negociação sindical",
     ],
 
     "Recrutamento e Seleção": [
@@ -81,6 +86,7 @@ SKILL_ALIASES = {
         "seleção",
         "r&s",
         "r & s",
+        "sourcing",
     ],
 
     "Treinamento e Desenvolvimento": [
@@ -89,6 +95,8 @@ SKILL_ALIASES = {
         "desenvolvimento de pessoas",
         "t&d",
         "t & d",
+        "capacitacao",
+        "capacitação",
     ],
 
     "Gestão de Pessoas": [
@@ -112,6 +120,7 @@ SKILL_ALIASES = {
         "ponto eletrônico",
         "tratamento de ponto",
         "jornada de trabalho",
+        "apontamento",
     ],
 
     "Rescisão": [
@@ -128,6 +137,8 @@ SKILL_ALIASES = {
         "férias",
         "calculo de ferias",
         "cálculo de férias",
+        "programacao de ferias",
+        "programação de férias",
     ],
 
     "Admissão": [
@@ -201,10 +212,15 @@ SKILL_ALIASES = {
     "Automação de Processos": [
         "automacao de processos",
         "automação de processos",
-        "automatizacao",
-        "automatização",
-        "automacao",
-        "automação",
+        "automatizacao de processos",
+        "automatização de processos",
+        "automacao de rotinas",
+        "automação de rotinas",
+        "automatizacao de rotinas",
+        "automatização de rotinas",
+        "processos automatizados",
+        "scripts de automacao",
+        "scripts de automação",
     ],
 
     "Melhoria de Processos": [
@@ -212,6 +228,8 @@ SKILL_ALIASES = {
         "otimizacao de processos",
         "otimização de processos",
         "process improvement",
+        "melhoria continua",
+        "melhoria contínua",
     ],
 
     "Pesquisa de Clima": [
@@ -224,6 +242,8 @@ SKILL_ALIASES = {
         "avaliacao de desempenho",
         "avaliação de desempenho",
         "performance evaluation",
+        "gestao de desempenho",
+        "gestão de desempenho",
     ],
 
     "Cargos e Salários": [
@@ -232,6 +252,7 @@ SKILL_ALIASES = {
         "descricao de cargos",
         "descrição de cargos",
         "plano de cargos",
+        "estrutura salarial",
     ],
 
     "Compliance Trabalhista": [
@@ -239,6 +260,10 @@ SKILL_ALIASES = {
         "compliance de rh",
         "compliance em rh",
         "conformidade trabalhista",
+        "auditoria trabalhista",
+        "auditorias trabalhistas",
+        "riscos trabalhistas",
+        "passivo trabalhista",
     ],
 
     "Sistemas de RH": [
@@ -258,6 +283,30 @@ SKILL_ALIASES = {
 }
 
 
+# ============================================================
+# REGRAS DE COMPETÊNCIAS RELACIONADAS
+# Só usamos relações com significado forte e rastreável.
+# ============================================================
+
+RELATED_SKILL_RULES = {
+    "Compliance Trabalhista": {
+        "all_of": [
+            "Legislação Trabalhista",
+            "Relações Trabalhistas",
+        ]
+    },
+
+    "Sistemas de RH": {
+        "any_of": [
+            "TOTVS RM",
+            "RM Labore",
+            "RM Chronus",
+            "RM Vitae",
+        ]
+    },
+}
+
+
 def normalize_text(text: str) -> str:
     """
     Normaliza texto para facilitar comparação:
@@ -273,7 +322,8 @@ def normalize_text(text: str) -> str:
 
     text = unicodedata.normalize("NFKD", text)
     text = "".join(
-        char for char in text
+        char
+        for char in text
         if not unicodedata.combining(char)
     )
 
@@ -282,50 +332,103 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
-def contains_term(text: str, term: str) -> bool:
+def contains_term(
+    normalized_text: str,
+    term: str,
+) -> bool:
     """
-    Procura uma expressão no texto tentando evitar
-    falsos positivos em palavras muito curtas.
+    Procura uma expressão já normalizada no texto.
+
+    Para termos curtos, usa limites de palavra.
+    Para expressões maiores, também usa limites nas extremidades,
+    reduzindo falsos positivos por trecho interno de palavra.
     """
 
-    text_normalized = normalize_text(text)
     term_normalized = normalize_text(term)
 
-    if len(term_normalized) <= 3:
-        pattern = rf"(?<!\w){re.escape(term_normalized)}(?!\w)"
-        return bool(re.search(pattern, text_normalized))
+    if not term_normalized:
+        return False
 
-    return term_normalized in text_normalized
+    pattern = (
+        rf"(?<!\w)"
+        rf"{re.escape(term_normalized)}"
+        rf"(?!\w)"
+    )
+
+    return bool(
+        re.search(
+            pattern,
+            normalized_text,
+        )
+    )
 
 
 def detect_skills(text: str) -> dict:
     """
     Detecta competências existentes em um texto.
 
-    Retorna:
-    {
-        "competencias": [...],
-        "evidencias": {
-            "TOTVS RM": ["rm labore"],
-            ...
-        }
-    }
+    Retorna competências, evidências diretas e inferências
+    de competências relacionadas.
     """
+
+    normalized_text = normalize_text(text)
 
     detected = []
     evidences = {}
 
+    # 1. Evidências diretas
     for skill, aliases in SKILL_ALIASES.items():
-
         matched_aliases = []
 
         for alias in aliases:
-            if contains_term(text, alias):
-                matched_aliases.append(alias)
+            if contains_term(normalized_text, alias):
+                alias_normalized = normalize_text(alias)
+
+                if alias_normalized not in matched_aliases:
+                    matched_aliases.append(alias_normalized)
 
         if matched_aliases:
             detected.append(skill)
             evidences[skill] = matched_aliases
+
+    # 2. Inferências relacionadas controladas
+    detected_set = set(detected)
+
+    for related_skill, rule in RELATED_SKILL_RULES.items():
+        if related_skill in detected_set:
+            continue
+
+        all_of = rule.get("all_of", [])
+        any_of = rule.get("any_of", [])
+
+        all_condition = (
+            bool(all_of)
+            and all(skill in detected_set for skill in all_of)
+        )
+
+        any_condition = (
+            bool(any_of)
+            and any(skill in detected_set for skill in any_of)
+        )
+
+        if all_condition or any_condition:
+            detected.append(related_skill)
+            detected_set.add(related_skill)
+
+            source_skills = (
+                all_of
+                if all_condition
+                else [
+                    skill
+                    for skill in any_of
+                    if skill in detected_set
+                ]
+            )
+
+            evidences[related_skill] = [
+                "inferida a partir de: "
+                + ", ".join(source_skills)
+            ]
 
     return {
         "competencias": detected,
@@ -335,8 +438,7 @@ def detect_skills(text: str) -> dict:
 
 def get_skill_catalog() -> list:
     """
-    Retorna lista de competências disponíveis
-    para utilização na interface da vaga.
+    Retorna a lista de competências disponíveis na interface.
     """
 
     return sorted(SKILL_ALIASES.keys())

@@ -1,21 +1,23 @@
+import re
 from io import BytesIO
+from pathlib import Path
 
 from pypdf import PdfReader
 
 
 def extract_text_from_pdf(uploaded_file) -> str:
     """
-    Extrai o texto de um currículo em PDF recebido
-    através do Streamlit.
+    Extrai texto de um currículo em PDF recebido pelo Streamlit.
+
+    Se o PDF não contiver texto extraível, gera uma mensagem clara
+    em vez de retornar uma análise vazia.
     """
 
     if uploaded_file is None:
         return ""
 
     try:
-        # Garante que a leitura comece do início
         uploaded_file.seek(0)
-
         file_bytes = uploaded_file.read()
 
         reader = PdfReader(BytesIO(file_bytes))
@@ -28,7 +30,18 @@ def extract_text_from_pdf(uploaded_file) -> str:
             if text:
                 pages_text.append(text)
 
-        return "\n".join(pages_text).strip()
+        result = "\n".join(pages_text).strip()
+
+        if not result:
+            raise ValueError(
+                "o PDF não possui texto extraível. "
+                "Ele pode ser uma imagem digitalizada."
+            )
+
+        return result
+
+    except ValueError:
+        raise
 
     except Exception as exc:
         raise ValueError(
@@ -36,14 +49,47 @@ def extract_text_from_pdf(uploaded_file) -> str:
         ) from exc
 
 
-def extract_candidate_name(text: str) -> str:
+def _name_from_file(file_name: str | None) -> str:
     """
-    Tenta identificar o nome do candidato pelas primeiras
-    linhas do currículo.
+    Usa o nome do arquivo como fallback quando o nome do candidato
+    não é identificado no conteúdo.
+    """
+
+    if not file_name:
+        return "Candidato não identificado"
+
+    stem = Path(file_name).stem
+
+    stem = re.sub(r"^\s*\d+\s*[_\-.\s]*", "", stem)
+    stem = re.sub(
+        r"\b(curriculo|currículo|cv|resume)\b",
+        " ",
+        stem,
+        flags=re.IGNORECASE,
+    )
+
+    stem = re.sub(r"[_\-]+", " ", stem)
+    stem = re.sub(r"\s+", " ", stem).strip()
+
+    if not stem:
+        return "Candidato não identificado"
+
+    return stem.title()[:80]
+
+
+def extract_candidate_name(
+    text: str,
+    file_name: str | None = None,
+) -> str:
+    """
+    Tenta identificar o nome do candidato pelas primeiras linhas.
+
+    Evita títulos, contatos, endereços, URLs e linhas com muitos números.
+    Se não conseguir, utiliza o nome do arquivo como fallback.
     """
 
     if not text:
-        return "Candidato não identificado"
+        return _name_from_file(file_name)
 
     lines = [
         line.strip()
@@ -52,7 +98,7 @@ def extract_candidate_name(text: str) -> str:
     ]
 
     if not lines:
-        return "Candidato não identificado"
+        return _name_from_file(file_name)
 
     ignored_terms = {
         "curriculo",
@@ -63,19 +109,65 @@ def extract_candidate_name(text: str) -> str:
         "perfil profissional",
         "resumo profissional",
         "dados pessoais",
+        "experiencia profissional",
+        "experiência profissional",
+        "formacao academica",
+        "formação acadêmica",
+        "objetivo profissional",
+        "competencias",
+        "competências",
     }
 
-    for line in lines[:10]:
+    blocked_fragments = {
+        "linkedin",
+        "email",
+        "e-mail",
+        "telefone",
+        "celular",
+        "whatsapp",
+        "endereco",
+        "endereço",
+        "nascimento",
+        "brasil",
+    }
 
+    for line in lines[:15]:
         normalized_line = line.lower().strip()
 
         if normalized_line in ignored_terms:
             continue
 
+        if any(
+            fragment in normalized_line
+            for fragment in blocked_fragments
+        ):
+            continue
+
+        if "@" in line or "http://" in normalized_line or "https://" in normalized_line:
+            continue
+
+        if re.search(r"\d{4,}", line):
+            continue
+
+        if ":" in line and len(line.split()) <= 6:
+            continue
+
         number_of_words = len(line.split())
 
-        # Um nome costuma ter entre 2 e 6 palavras
-        if 2 <= number_of_words <= 6 and len(line) <= 80:
-            return line
+        if not (2 <= number_of_words <= 6):
+            continue
 
-    return lines[0][:80]
+        if len(line) > 80:
+            continue
+
+        # Nomes normalmente não contêm muitos símbolos
+        symbol_count = len(
+            re.findall(r"[^\wÀ-ÿ\s.'-]", line)
+        )
+
+        if symbol_count > 1:
+            continue
+
+        return line
+
+    return _name_from_file(file_name)
